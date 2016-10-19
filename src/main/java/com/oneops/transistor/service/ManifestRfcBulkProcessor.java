@@ -24,6 +24,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 import com.oneops.transistor.util.CloudUtil;
 import org.apache.log4j.Logger;
@@ -310,7 +311,6 @@ public class ManifestRfcBulkProcessor {
 	
 	public long enablePlatform(long platformCiId, String userId) {
 		long releaseId = 0;
-		cloudUtil.check4missingServices(platformCiId);
 		List<CmsRfcRelation> composedOfRels = cmRfcMrgProcessor.getToCIRelationsNaked(platformCiId, "manifest.ComposedOf", null, "manifest.Environment");
 		for (CmsRfcRelation composedOfRel : composedOfRels) {
 			CmsRfcRelation newRfc = trUtil.cloneRfcRelation(composedOfRel);
@@ -319,7 +319,6 @@ public class ManifestRfcBulkProcessor {
 			CmsRfcRelation rfc = cmRfcMrgProcessor.upsertRelationRfc(newRfc, userId);
 			releaseId = rfc.getReleaseId();
 		}
-
 		return releaseId;
 	}
 
@@ -587,6 +586,7 @@ public class ManifestRfcBulkProcessor {
 			edges.put(key, edge);
 			
 			List<CmsCIRelation> ciRels = cmProcessor.getFromCIRelations(templateRel.getToCi().getCiId(), null, null);
+			ciRels = ciRels.stream().filter(rel->!CmsConstants.CI_STATE_PENDING_DELETION.equals(rel.getRelationState())).collect(Collectors.toList());
 			templInternalRels.addAll(ciRels);
 			
 		}
