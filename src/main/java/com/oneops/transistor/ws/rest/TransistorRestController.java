@@ -34,7 +34,10 @@ import com.oneops.transistor.domain.IaasRequest;
 import com.oneops.transistor.exceptions.DesignExportException;
 import com.oneops.transistor.exceptions.TransistorException;
 import com.oneops.transistor.export.domain.DesignExportSimple;
+//import com.oneops.transistor.export.domain.EnvironmentExportSimple;
 import com.oneops.transistor.service.*;
+import com.oneops.transistor.snapshot.domain.Snapshot;
+import com.oneops.transistor.service.SnapshotManager;
 import org.apache.log4j.Logger;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.DuplicateKeyException;
@@ -60,6 +63,10 @@ public class TransistorRestController extends AbstractRestController {
 	private BomAsyncProcessor baProcessor;
 	private ManifestAsyncProcessor maProcessor;
 	private CmsUtil util;
+	private SnapshotManager snapshotManager;
+	
+	
+
 
 	public void setMaProcessor(ManifestAsyncProcessor maProcessor) {
 		this.maProcessor = maProcessor;
@@ -317,11 +324,29 @@ public class TransistorRestController extends AbstractRestController {
 		result.put("result", "success");
 		return result;
 	}
+//
+//	@RequestMapping(value="/environment/{envId}/export", method = RequestMethod.GET)
+//	@ResponseBody
+//	public EnvironmentExportSimple exportEnvironment(
+//			@PathVariable long envId,
+//			@RequestParam(value="platformIds", required = false)  Long[] platformIds,
+//			@RequestHeader(value="X-Cms-User", required = false)  String userId,
+//			@RequestHeader(value="X-Cms-Scope", required = false)  String scope){
+//
+//		if (userId == null) userId = "oneops-system";
+//		try {
+//			return dManager.exportEnvironment(envId, platformIds, scope);
+//		}  catch (CmsBaseException te) {
+//			logger.error(te);
+//			te.printStackTrace();
+//			throw te;
+//		}
+//	}
 	
 	@RequestMapping(value="/environments/{envId}", method = RequestMethod.PUT)
 	@ResponseBody
 	public Map<String,String> generateManifest(
-			@PathVariable long envId,
+			@PathVariable String envId,
 			@RequestBody Map<String,String> platModes,
 			@RequestHeader(value="X-Cms-User", required = false)  String userId,
 			HttpServletResponse response){
@@ -329,10 +354,12 @@ public class TransistorRestController extends AbstractRestController {
 		try {
 			if (userId == null) userId = "oneops-system";
 			
-			long startTime = System.currentTimeMillis(); 
+			long startTime = System.currentTimeMillis();
+			
+			String[] envIds = envId.split(",");
 			
 			//long releaseId = manifestManager.generateEnvManifest(envId, userId, platModes);
-			long releaseId = maProcessor.generateEnvManifest(envId, userId, platModes);
+			long releaseId = maProcessor.generateEnvManifest(envIds, userId, platModes);
 			
 			Map<String,String> result = new HashMap<>();
 			result.put("releaseId", String.valueOf(releaseId));
@@ -825,6 +852,75 @@ public class TransistorRestController extends AbstractRestController {
 			}
 		}
 		return longs;
+	}
+
+	@RequestMapping(value = "/snapshot/exportManifest", method = {RequestMethod.GET, RequestMethod.POST}, produces = "application/json")
+	@ResponseBody
+	public Snapshot exportManifest(@RequestParam(value = "ns") String namespace,
+								   @RequestHeader(value = "X-Cms-Scope", required = false) String scope) {
+
+		Snapshot snapshot = exportSnapshot(new String[]{namespace}, new String[]{null}, new Boolean[]{true}, scope);
+		snapshot.setNamespace(namespace);
+		return snapshot;
+	}
+
+
+	@RequestMapping(value = "/snapshot/exportDesign", method = {RequestMethod.GET, RequestMethod.POST}, produces = "application/json")
+	@ResponseBody
+	public Snapshot exportSnapshot(@RequestParam(value = "ns") String namespace,
+								   @RequestHeader(value = "X-Cms-Scope", required = false) String scope) {
+
+		Snapshot snapshot = exportSnapshot(new String[]{namespace, namespace, namespace + "/_design"}, new String[]{"catalog.Globalvar", "catalog.Platform", null}, new Boolean[]{false, false, true}, scope);
+		snapshot.setNamespace(namespace);
+		return snapshot;
+	}
+
+	public void setSnapshotManager(SnapshotManager snapshotManager) {
+		this.snapshotManager = snapshotManager;
+	}
+
+	@RequestMapping(value = "/snapshot/export", method = {RequestMethod.GET, RequestMethod.POST}, produces = "application/json")
+	@ResponseBody
+	public Snapshot exportSnapshot(@RequestParam(value = "ns") String[] namespaces,
+								   @RequestParam(value = "cn", required = false) String[] classNames,
+								   @RequestParam(value = "recursive", required = false) Boolean[] recursive, 
+								   @RequestHeader(value = "X-Cms-Scope", required = false) String scope) {
+		if (scope!=null) {
+			for (String ns : namespaces) {
+				if (!ns.startsWith(scope)) {
+					String error = "bad scope";
+					logger.error(error);
+					throw new TransistorException(CmsError.TRANSISTOR_BAD_SCOPE, error);
+				}
+			}
+		}
+		return snapshotManager.exportSnapshot(namespaces, classNames, recursive);
+	}
+
+
+	@RequestMapping(value = "/snapshot/import", method = RequestMethod.POST)
+	@ResponseBody
+	public Map<String, Object> importSnapshot(
+			@RequestBody Snapshot snapshot,
+			@RequestParam(value="release", required = false) Long releaseId, 
+			@RequestHeader(value = "X-Cms-Scope", required = false) String scope) {
+		Map<String, Object> result = new HashMap<>(3);
+		result.put("errors", snapshotManager.importSnapshotAndReplayTo(snapshot, releaseId));
+		result.put("result", "success");
+		return result;
+	}
+
+
+	@RequestMapping(value = "/snapshot/replay", method = RequestMethod.GET)
+	@ResponseBody
+	public Map<String, Object> replay(@RequestParam(value="fromRelease") Long fromReleaseId,
+			@RequestParam(value="toRelease") Long toReleaseId,
+			@RequestParam(value ="nsPath") String nsPath,
+			@RequestHeader(value = "X-Cms-Scope", required = false) String scope) {
+		Map<String, Object> result = new HashMap<>(3);
+		result.put("errors", snapshotManager.replay(fromReleaseId, toReleaseId, nsPath));
+		result.put("result", "success");
+		return result;
 	}
 
 
