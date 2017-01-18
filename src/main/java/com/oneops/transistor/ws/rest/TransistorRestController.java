@@ -356,9 +356,11 @@ public class TransistorRestController extends AbstractRestController {
 			
 			long startTime = System.currentTimeMillis();
 			
-			String[] envIds = envId.split(",");
-			
-			//long releaseId = manifestManager.generateEnvManifest(envId, userId, platModes);
+			String[] envIdStrings = envId.split(",");
+			List<Long> envIds = new ArrayList<>();
+			for (String envIdString:envIdStrings){
+				envIds.add(Long.parseLong(envIdString));
+			}
 			long releaseId = maProcessor.generateEnvManifest(envIds, userId, platModes);
 			
 			Map<String,String> result = new HashMap<>();
@@ -923,6 +925,16 @@ public class TransistorRestController extends AbstractRestController {
 		return result;
 	}
 
+	@RequestMapping(value="platforms/{platId}/components", method = RequestMethod.POST)
+	@ResponseBody
+	public CmsRfcRelationSimple createComponent(
+			@PathVariable long platId,
+			@RequestBody CmsRfcRelationSimple relSimple,
+			@RequestHeader(value="X-Cms-User", required = false)  String userId,
+			@RequestHeader(value="X-Cms-Scope", required = false)  String scope) throws DJException {
+
+		return dManager.createComponent(platId, relSimple, userId, scope);
+	}
 
 	private Map<String,Long> toReleaseMap(long releaseId) {
 		return Collections.singletonMap(RELEASE_ID,releaseId);
