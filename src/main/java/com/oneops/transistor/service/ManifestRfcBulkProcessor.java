@@ -31,6 +31,7 @@ import java.util.stream.Collectors;
 import com.oneops.transistor.util.CloudUtil;
 
 import org.apache.log4j.Logger;
+import org.springframework.beans.BeanUtils;
 
 import com.oneops.cms.cm.domain.CmsCI;
 import com.oneops.cms.cm.domain.CmsCIAttribute;
@@ -745,6 +746,8 @@ public class ManifestRfcBulkProcessor {
 		Map<String, CmsRfcRelation> existingMonitorsMap = existingMonitorRelations.stream().
 				collect(Collectors.toMap(reln->reln.getToRfcCi().getCiName(), Function.identity()));
 
+		List<String> rfcNames = platformRfcs.getRfcList().stream().map(CmsRfcCI::getCiName).collect(Collectors.toList());
+
 		monitorEdges.values().stream().forEach(edge -> {
 			CmsCIRelation tmplRelation = edge.templateRel;
 			if (!edge.userRels.isEmpty()) {
@@ -758,7 +761,7 @@ public class ManifestRfcBulkProcessor {
 						long manifestFromCiId = mrgMap.designIdsMap.get(designFromCiId).get(0);
 						monitorFromRfc = cmRfcMrgProcessor.getCiById(manifestFromCiId, "df");
 					}
-					processMonitor(tmplRelation, designRelation, manifestPlat, context, platformRfcs, monitorFromRfc, existingMonitorsMap);
+					processMonitor(tmplRelation, designRelation, manifestPlat, context, platformRfcs, monitorFromRfc, existingMonitorsMap, rfcNames);
 
 				}
 			}
@@ -767,13 +770,13 @@ public class ManifestRfcBulkProcessor {
 				if (mrgMap.templateIdsMap.containsKey(templateFromCiId)) {
 					mrgMap.templateIdsMap.get(templateFromCiId).forEach(manifestCiId -> {
 						CmsRfcCI monitorFromRfc = cmRfcMrgProcessor.getCiById(manifestCiId, "df");
-						processMonitor(tmplRelation, null, manifestPlat, context, platformRfcs, monitorFromRfc, existingMonitorsMap);
+						processMonitor(tmplRelation, null, manifestPlat, context, platformRfcs, monitorFromRfc, existingMonitorsMap, rfcNames);
 					});
 				}
 
 				if (mrgMap.rfcMap.containsKey(templateFromCiId)) {
 					mrgMap.rfcMap.get(templateFromCiId).forEach(manifestFromRfc -> {
-						processMonitor(tmplRelation, null, manifestPlat, context, platformRfcs, manifestFromRfc, existingMonitorsMap);
+						processMonitor(tmplRelation, null, manifestPlat, context, platformRfcs, manifestFromRfc, existingMonitorsMap, rfcNames);
 					});
 				}
 
@@ -798,14 +801,17 @@ public class ManifestRfcBulkProcessor {
 	}
 
 	private void processMonitor(CmsCIRelation tmplRelation, CmsCIRelation designRelation, CmsRfcCI manifestPlat, DesignPullContext context,
-			ManifestRfcContainer platformRfcs, CmsRfcCI monitorFromRfc, Map<String, CmsRfcRelation> existingMonitorsMap) {
+			ManifestRfcContainer platformRfcs, CmsRfcCI monitorFromRfc, Map<String, CmsRfcRelation> existingMonitorsMap, List<String> rfcNames) {
 
 		CmsCI templateCi = tmplRelation != null ? tmplRelation.getToCi() : null;
 		CmsCI designCi = designRelation != null ? designRelation.getToCi() : null;
 
 		String monitorName = null;
 		if (designRelation == null) {
-			monitorName = getMonitorName(manifestPlat, monitorFromRfc.getCiName(), tmplRelation.getToCi().getCiName());
+			CmsCI templateCiClone = new CmsCI();
+            BeanUtils.copyProperties(templateCi, templateCiClone);
+            templateCi = templateCiClone;
+            monitorName = getMonitorName(manifestPlat, monitorFromRfc.getCiName(), tmplRelation.getToCi().getCiName());
 			//change the template monitor CI name to target name if there is no design CI 
 			//as we need to find a match in existing manifest CIs below using this name
 			templateCi.setCiName(monitorName);
@@ -855,7 +861,9 @@ public class ManifestRfcBulkProcessor {
 			}
 			//create dummy update on the component if there is an update on the monitor and there is no rfc already for the component
 			if (monitorCiNeedsUpdate && (monitorFromRfc.getRfcId() == 0)) {
-				cmRfcMrgProcessor.createDummyUpdateRfc(monitorFromRfc.getCiId(), null, 0, context.userId);
+				if (!rfcNames.contains(monitorFromRfc.getCiName())) {
+					cmRfcMrgProcessor.createDummyUpdateRfc(monitorFromRfc.getCiId(), null, 0, context.userId);
+				}
 			}
 		}
 	}
