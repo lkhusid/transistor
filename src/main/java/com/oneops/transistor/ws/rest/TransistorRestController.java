@@ -871,7 +871,7 @@ public class TransistorRestController extends AbstractRestController {
 			@RequestHeader(value="X-Cms-Scope", required = false)  String scope){
 
 		if (userId == null) userId = "oneops-system";
-		long releaseId = dManager.refreshPack(platId, packSemVer, userId ,scope);
+		long releaseId = dManager.updateFromPack(platId, packSemVer, userId, scope);
 		return toReleaseMap(releaseId);
 	}
 
