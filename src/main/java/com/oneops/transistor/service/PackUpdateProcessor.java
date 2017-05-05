@@ -36,9 +36,9 @@ import java.util.stream.Collectors;
 import static com.oneops.cms.util.CmsConstants.*;
 
 /**
- * Processor class to sync the design components with the latest pack changes
+ * Processor class to update platform to a given pack version.
  *
- * @author ranand
+ * @author lkhusid
  */
 public class PackUpdateProcessor {
 
@@ -86,7 +86,7 @@ public class PackUpdateProcessor {
 
         trUtil.verifyScope(designPlatform, scope);
 
-        logger.info("Processing pack update to version " + packVersion  + " for platform " + designPlatform.getCiName() + " in " + designPlatform.getNsPath());
+        logger.info("Processing pack update to version " + packVersion + " for platform " + designPlatform.getCiName() + " in " + designPlatform.getNsPath());
         long t = System.currentTimeMillis();
 
         String designPlatformNsPath = designPlatform.getNsPath() + "/_design/" + designPlatform.getCiName();
@@ -130,15 +130,13 @@ public class PackUpdateProcessor {
         String newPackDigest = context.packVersionCi.getAttribute("commit").getDfValue();
         if (!designPlatform.getAttribute("version").getDfValue().equals(packVersion) ||
                 !designPlatform.getAttribute("pack_digest").getDfValue().equals(newPackDigest)) {
-            CmsRfcCI rfc = rfcUtil.mergeRfcAndCi(null, designPlatform, null);
-            rfc.getAttribute("version").setNewValue(packVersion);
-            rfc.getAttribute("pack_digest").setNewValue(newPackDigest);
-            rfc.setRfcAction("update");
-            rfc.setCiName(designPlatform.getCiName());
-            submitRfcCi(rfc, context);
+            Map<String, String> changes = new HashMap<>();
+            changes.put("version", packVersion);
+            changes.put("pack_digest", newPackDigest);
+            submitRfcCi(new CmsRfcCI(designPlatform, context.user, changes), context);
         }
 
-        logger.info("Finished pack update to version " + packVersion  + " for platform " + designPlatform.getCiName() + " in " + designPlatform.getNsPath() + " in " + (System.currentTimeMillis() - t) + "ms. " + (context.releaseId == null ? "No changes." : "Created release id: " + context.releaseId));
+        logger.info("Finished pack update to version " + packVersion + " for platform " + designPlatform.getCiName() + " in " + designPlatform.getNsPath() + " in " + (System.currentTimeMillis() - t) + "ms. " + (context.releaseId == null ? "No changes." : "Created release id: " + context.releaseId));
 
         return context.releaseId == null ? 0 : context.releaseId;
     }
@@ -309,7 +307,7 @@ public class PackUpdateProcessor {
     }
 
     private CmsRfcCI updateComponentIfNeeded(CmsCI existing, CmsCI template, Context context) {
-        Map<String, String> changes = extractChangedAttrbiutes(existing, template);
+        Map<String, String> changes = extractChangedAttributes(existing.getAttributes(), template.getAttributes());
         CmsRfcCI rfc = new CmsRfcCI(existing, context.user, changes);
         if (changes.size() > 0) {
             submitRfcCi(rfc, context);
@@ -318,21 +316,10 @@ public class PackUpdateProcessor {
     }
 
     private void updateCiIfNeeded(CmsCI existing, CmsCI template, Context context) {
-        Map<String, String> changes = extractChangedAttrbiutes(existing, template);
+        Map<String, String> changes = extractChangedAttributes(existing.getAttributes(), template.getAttributes());
         if (changes.size() > 0) {
             submitRfcCi(new CmsRfcCI(existing, context.user, changes), context);
         }
-    }
-
-    private Map<String, String> extractChangedAttrbiutes(CmsCI existing, CmsCI template) {
-        Map<String, String> result = new HashMap<>();
-        for (String attrName : template.getAttributes().keySet()) {
-            String templateValue = template.getAttribute(attrName).getDfValue();
-            if (shouldUpdateAttribute(existing.getAttribute(attrName), templateValue)) {
-                result.put(attrName, templateValue);
-            }
-        }
-        return result;
     }
 
     private void submitRfcCi(CmsRfcCI rfc, Context context) {
@@ -370,21 +357,10 @@ public class PackUpdateProcessor {
     }
 
     private void updateRelationIfNeeded(CmsCIRelation existing, CmsCIRelation template, Context context) {
-        Map<String, String> changes = extractChangedAttrbiutes(existing, template);
+        Map<String, String> changes = extractChangedAttributes(existing.getAttributes(), template.getAttributes());
         if (changes.size() > 0) {
             submitRfcRelation(new CmsRfcRelation(existing, context.user, changes), context);
         }
-    }
-
-    private Map<String, String> extractChangedAttrbiutes(CmsCIRelation existing, CmsCIRelation template) {
-        Map<String, String> result = new HashMap<>();
-        for (String attrName : template.getAttributes().keySet()) {
-            String templateValue = template.getAttribute(attrName).getDfValue();
-            if (shouldUpdateAttribute(existing.getAttribute(attrName), templateValue)) {
-                result.put(attrName, templateValue);
-            }
-        }
-        return result;
     }
 
     private void submitRfcRelation(CmsRfcRelation rfc, Context context) {
@@ -392,6 +368,17 @@ public class PackUpdateProcessor {
         rfc.setUpdatedBy(context.user);
         rfc.setReleaseId(context.ensureReleaseId());
         rfcProcessor.createRfcRelationNoCheck(rfc, context.user);
+    }
+
+    private Map<String, String> extractChangedAttributes(Map<String, ? extends CmsBasicAttribute> existing, Map<String, ? extends CmsBasicAttribute> template) {
+        Map<String, String> result = new HashMap<>();
+        for (String attrName : template.keySet()) {
+            String templateValue = template.get(attrName).getDfValue();
+            if (shouldUpdateAttribute(existing.get(attrName), templateValue)) {
+                result.put(attrName, templateValue);
+            }
+        }
+        return result;
     }
 
     private boolean shouldUpdateAttribute(CmsBasicAttribute attr, String newValue) {
