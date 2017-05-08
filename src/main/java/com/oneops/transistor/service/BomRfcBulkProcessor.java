@@ -20,10 +20,10 @@ package com.oneops.transistor.service;
 import com.google.gson.Gson;
 import com.oneops.cms.cm.domain.*;
 import com.oneops.cms.cm.service.CmsCmProcessor;
-import com.oneops.cms.dj.domain.CmsRelease;
 import com.oneops.cms.dj.domain.CmsRfcAttribute;
 import com.oneops.cms.dj.domain.CmsRfcCI;
 import com.oneops.cms.dj.domain.CmsRfcRelation;
+import com.oneops.cms.dj.domain.RfcHint;
 import com.oneops.cms.dj.service.CmsCmRfcMrgProcessor;
 import com.oneops.cms.dj.service.CmsRfcProcessor;
 import com.oneops.cms.exceptions.CIValidationException;
@@ -40,6 +40,7 @@ import com.oneops.cms.util.CmsError;
 import com.oneops.cms.util.CmsUtil;
 import com.oneops.cms.util.domain.CmsVar;
 import com.oneops.transistor.exceptions.TransistorException;
+
 import org.apache.log4j.Logger;
 
 import java.util.*;
@@ -614,11 +615,15 @@ public class BomRfcBulkProcessor {
 						String bomId = "bom." + trUtil.getLongShortClazzName(bom.mfstCi.getCiClassName()) + ":" + bom.ciName;
 						CmsCI existingCi = existingCIs.get(bomId);
 						CmsRfcCI existingRfc = existingRFCs.get(bomId);
-						CmsRfcCI rfc = bootstrapRfc(bom,existingRfc, existingCi, nsPath);
-						rfc.setCreatedBy(userId);
-						rfc.setUpdatedBy(userId);
-						rfc.setNsId(nsId);
-						cmRfcMrgProcessor.createDummyUpdateRfc(rfc.getCiId(), null, bom.execOrder, userId);
+						if (existingRfc == null && bom.rfc.getRfcId() == 0) {
+							logger.info("creating dummy update rfc with hint for " + existingCi.getCiId());
+							cmRfcMrgProcessor.createDummyUpdateRfcWithHint(existingCi.getCiId(), getPropagateUpdateHint(), 
+									null, bom.execOrder, userId);
+						}
+						else {
+							long ciId = existingRfc != null ? existingRfc.getCiId() : existingCi.getCiId();
+							cmRfcMrgProcessor.createDummyUpdateRfc(ciId, null, bom.execOrder, userId);
+						}
 					}
 				}
 		}
@@ -638,6 +643,12 @@ public class BomRfcBulkProcessor {
 		
 		logger.info(nsPath + " >>> Total time taken by propagation in seconds: " + timeTakenByPropagation/1000);
 		return maxExecOrder;
+	}
+
+	private String getPropagateUpdateHint() {
+		RfcHint hint = new RfcHint();
+		hint.setPropagation("true");
+		return gson.toJson(hint);
 	}
 
     private StringBuilder getReleaseNs(String nsPath) {
@@ -1103,7 +1114,7 @@ public class BomRfcBulkProcessor {
 	    setCiId(newRfc, existingRfc, existingBomCi);
 		return newRfc;
 	}
-	
+
    /*
 	private void reverseExecOrder(List<BomRfc> boms, int startOrder) {
 		int maxOrder = getMaxExecOrder(boms);
@@ -1166,7 +1177,7 @@ public class BomRfcBulkProcessor {
 	    
         CmsVar disableBFSVar = cmProcessor.getCmSimpleVar(DISABLE_BFS_VAR_NAME);
         boolean enableBFS = (!(disableBFSVar !=null && "true".equalsIgnoreCase(disableBFSVar.getValue())) && ENABLE_BFS_OPTIMIZATION);
-        logger.info("Path calc BFS optimization enabled:"+enableBFS);
+        logger.info(nsPath + " >>> Path calc BFS optimization: "+enableBFS);
 	    
 		long nsId = trUtil.verifyAndCreateNS(nsPath);
 		List<CmsLink> dependsOnlinks = cmRfcMrgProcessor.getLinks(nsPath, "bom.DependsOn");
@@ -1183,7 +1194,11 @@ public class BomRfcBulkProcessor {
 		}
 		long counter = 0;
 		long lengthSum = 0;
-		long lengthCounter = 0;  
+		long lengthCounter = 0;
+		long leafTime = 0;
+		long leafCalls = 0;
+		long dpOnPathTime = 0;
+		long dpOnPathCalls = 0;
 		
 		Set<String> relRfcGoids = new HashSet<String>();
 		Map<Long, List<CmsCIRelation>> managedViaMap = null;
@@ -1194,7 +1209,9 @@ public class BomRfcBulkProcessor {
 			
 			
 			if (managedViaMap==null){
+				long time = System.currentTimeMillis();
 				managedViaMap = cmProcessor.getCIRelations(mfstCi.getNsPath(), null, "ManagedVia", null, null).stream().collect(Collectors.groupingBy(CmsCIRelation::getFromCiId));
+				logger.info(nsPath + " >>>  getCiRelations, time spent - " + (System.currentTimeMillis() - time));
 			}
 			
 			List<CmsCIRelation> mfstMngViaRels = managedViaMap.containsKey(mfstCi.getCiId())?managedViaMap.get(mfstCi.getCiId()):new ArrayList<>();
@@ -1202,9 +1219,12 @@ public class BomRfcBulkProcessor {
 			for (CmsCIRelation mfstMngViaRel : mfstMngViaRels) {
 				// lets find the path 
 				//List<String> pathClasses = getTraversalPath(mfstMngViaRel);
+				long time = System.currentTimeMillis();
 				List<String> pathClasses = enableBFS?
 						getDpOnPathBfs(mfstMngViaRel.getFromCiId(), mfstMngViaRel.getToCiId(), depOnFromMap):
 						getDpOnPath(mfstMngViaRel.getFromCiId(), mfstMngViaRel.getToCiId(), depOnFromMap);
+				dpOnPathTime+=System.currentTimeMillis()-time;
+				dpOnPathCalls++;
 				lengthCounter++;
 				lengthSum+=pathClasses.size();
 				if (pathClasses.size()==0) {
@@ -1220,7 +1240,11 @@ public class BomRfcBulkProcessor {
 					LinkedList<String> path = new LinkedList<String>();
 					path.addAll(pathClasses);
 					if (bomRfc.rfc != null) {
+						long startTime = System.currentTimeMillis();
+						leafCalls++;
 						List<Long> targets = getLeafsByPath(bomRfc.rfc.getCiId(), path,mfstMngViaRel.getToCiId(), dependsOnMap);
+						leafTime += (System.currentTimeMillis()-startTime);
+
 						Map<Long, BomRfc> targetMap = new HashMap<Long, BomRfc>();
 						for (BomRfc targetBom :  bomsMap.get(mfstMngViaRel.getToCiId())) {
 							targetMap.put(targetBom.rfc.getCiId(), targetBom);
@@ -1259,9 +1283,8 @@ public class BomRfcBulkProcessor {
 				}
 			}
 		}
-		logger.info("Bom ManagedVia Relation Counter:"+ counter);
-		logger.info("Avg length:"+(double)lengthSum/lengthCounter);
-	};
+		logger.info(nsPath + " >>> dpOnPath time: "+dpOnPathTime+" Calls: "+dpOnPathCalls+" leafsByPath time: " +  leafTime+ " calls: "+ leafCalls +" Relation Counter:"+ counter+" Avg path length:"+(double)lengthSum/lengthCounter);
+	}
 
 	private void processSecuredByRels(List<CmsCIRelation> mfstCiRels, Map<Long, List<BomRfc>> bomsMap, String nsPath,  String user, ExistingRels existingRels, Long releaseId) {
 		
@@ -1755,4 +1778,5 @@ public class BomRfcBulkProcessor {
 		}
 		
 	}
+
 }
